@@ -39,7 +39,7 @@ See [`Linux`](./linux.md) for more details.
 
 ### `macOS`
 
-`macOS` is Apple's proprietary operating system for Mac computers.
+`macOS` is `Apple`'s proprietary operating system for `Mac` computers.
 
 It is based on `Unix`, so many command-line tools and workflows that work on `Linux` also work on `macOS`.
 
@@ -49,11 +49,11 @@ It is based on `Unix`, so many command-line tools and workflows that work on `Li
 
 It uses a different file system structure and command-line environment from `Linux` and `macOS`.
 
-Students on `Windows` can use [`WSL`](#wsl) (Windows Subsystem for Linux) to run a `Linux` environment.
+Students on `Windows` can use [`WSL`](#wsl) to run a `Linux` environment.
 
 #### `WSL`
 
-`WSL` (Windows Subsystem for Linux) is a feature of `Windows` that lets you run a `Linux` environment directly on `Windows`, without a virtual machine.
+`WSL` (Windows Subsystem for `Linux`) is a feature of `Windows` that lets you run a `Linux` environment directly on `Windows`, without a virtual machine.
 
 Docs:
 
