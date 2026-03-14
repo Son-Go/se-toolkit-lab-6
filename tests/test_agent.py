@@ -35,6 +35,8 @@ def get_test_env() -> dict[str, str]:
         "LLM_API_KEY": "test-key",
         "LLM_API_BASE": "http://test.local/v1",
         "LLM_MODEL": "test-model",
+        "LMS_API_KEY": "test-lms-key",
+        "AGENT_API_BASE_URL": "http://test.local:8000",
     }
 
 
@@ -45,7 +47,7 @@ class TestAgentOutput:
         """Agent should output valid JSON to stdout."""
         stdout, stderr, code = run_agent("test question", get_test_env())
         # Agent may fail to connect to LLM but should still return valid JSON
-        assert stdout.strip(), "stdout should not be empty"
+        assert stdout.strip(), f"stdout should not be empty. stderr: {stderr}"
         data = json.loads(stdout)
         assert isinstance(data, dict)
 
@@ -94,8 +96,17 @@ class TestAgentConfig:
         assert code != 0
         assert "LLM_MODEL" in stderr
 
+    def test_fails_without_lms_api_key(self) -> None:
+        """Agent should exit with error if LMS_API_KEY is missing."""
+        env = get_test_env()
+        del env["LMS_API_KEY"]
+
+        stdout, stderr, code = run_agent("test", env)
+        assert code != 0
+        assert "LMS_API_KEY" in stderr
+
     def test_logs_config_to_stderr(self) -> None:
-        """Agent should log configuration to stderr (without API key)."""
+        """Agent should log configuration to stderr (without API keys)."""
         stdout, stderr, code = run_agent("test", get_test_env())
         # Even if LLM call fails, config should be logged
         assert "test-model" in stderr
@@ -164,3 +175,25 @@ class TestAgentTools:
         result = list_files("nonexistent_dir_12345")
         assert "Error" in result
         assert "not found" in result.lower()
+
+    def test_query_api_requires_lms_key(self) -> None:
+        """query_api should return error without LMS_API_KEY."""
+        sys.path.insert(0, str(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+        from agent import query_api
+
+        result = query_api("GET", "/items/", config={})
+        assert "Error" in result
+        assert "LMS_API_KEY" in result
+
+    def test_query_api_builds_url_correctly(self) -> None:
+        """query_api should build URL correctly (will fail to connect in test)."""
+        sys.path.insert(0, str(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+        from agent import query_api
+
+        config = {
+            "lms_api_key": "test-key",
+            "api_base_url": "http://invalid-host-12345:9999"
+        }
+        result = query_api("GET", "/items/", config=config)
+        # Should fail to connect but with connection error, not URL error
+        assert "Error" in result
