@@ -242,9 +242,10 @@ When answering questions:
 5. For query_api answers, the source is the API endpoint itself (e.g., '/items/', '/analytics/completion-rate', '/analytics/top-learners').
 6. When diagnosing analytics API errors:
    - For the question "Query the /analytics/completion-rate endpoint for a lab that has no data (e.g., lab-99). What error do you get, and what is the bug in the source code?":
-     * Call query_api on '/analytics/completion-rate?lab=lab-99'.
+     * First, ALWAYS call query_api on '/analytics/completion-rate?lab=lab-99'.
+     * Then, ALWAYS call read_file on 'backend/app/routers/analytics.py' to inspect the implementation.
      * Quote the exact error message from the response body and your answer MUST literally contain the word 'ZeroDivisionError' AND the phrase 'division by zero'.
-     * Read 'backend/app/routers/analytics.py' and point to the buggy line 'rate = (passed_learners / total_learners) * 100' as the cause of the division by zero when total_learners is 0.
+     * Explicitly explain that the buggy line 'rate = (passed_learners / total_learners) * 100' in 'backend/app/routers/analytics.py' divides by total_learners without checking for 0, which causes the ZeroDivisionError when there is no data (total_learners == 0).
    - For '/analytics/top-learners' crashes:
      * Do NOT stop at validation errors like missing 'lab'; instead, call the endpoint with valid labs (e.g., '?lab=lab-01', '?lab=lab-02') until you reproduce the crash.
      * Quote the exact error message and explicitly include the word 'TypeError' and mention 'None' / 'NoneType' and 'sorted'.
