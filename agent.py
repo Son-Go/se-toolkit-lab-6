@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """CLI agent that answers questions using an LLM with tools.
 
-Reads LLM configuration from environment variables:
+Reads configuration from environment variables:
 - LLM_API_KEY: API key for the LLM provider
 - LLM_API_BASE: Base URL for the LLM API endpoint
 - LLM_MODEL: Model name to use
+- LMS_API_KEY: API key for backend authentication
+- AGENT_API_BASE_URL: Base URL for the backend API (default: http://localhost:42002)
 
 Tools:
 - read_file: Read a file from the project repository
 - list_files: List files in a directory
+- query_api: Query the backend API with authentication
 
 Outputs JSON response to stdout, logs debug info to stderr.
 """
@@ -28,30 +31,40 @@ MAX_TOOL_CALLS = 10
 PROJECT_ROOT = Path(__file__).parent.resolve()
 
 
-def load_llm_config() -> dict[str, str]:
-    """Load LLM configuration from environment variables.
+def load_agent_config() -> dict[str, str]:
+    """Load all agent configuration from environment variables.
 
     Returns:
-        Dictionary with api_key, api_base, and model.
+        Dictionary with LLM and LMS configuration.
 
     Raises:
         SystemExit: If any required environment variable is missing.
     """
-    required_vars = ["LLM_API_KEY", "LLM_API_BASE", "LLM_MODEL"]
     config: dict[str, str] = {}
 
-    var_map = {
-        "LLM_API_KEY": "api_key",
-        "LLM_API_BASE": "api_base",
-        "LLM_MODEL": "model",
+    # LLM configuration (required)
+    llm_vars = {
+        "LLM_API_KEY": "llm_api_key",
+        "LLM_API_BASE": "llm_api_base",
+        "LLM_MODEL": "llm_model",
     }
 
-    for var, key in var_map.items():
+    for var, key in llm_vars.items():
         value = os.environ.get(var)
         if value is None:
             print(f"Error: Required environment variable {var} is not set", file=sys.stderr)
             sys.exit(1)
         config[key] = value
+
+    # LMS API key (required for query_api)
+    lms_key = os.environ.get("LMS_API_KEY")
+    if lms_key is None:
+        print("Error: Required environment variable LMS_API_KEY is not set", file=sys.stderr)
+        sys.exit(1)
+    config["lms_api_key"] = lms_key
+
+    # Backend API base URL (optional, defaults to localhost:42002)
+    config["api_base_url"] = os.environ.get("AGENT_API_BASE_URL", "http://localhost:42002")
 
     return config
 
@@ -168,22 +181,56 @@ TOOL_SCHEMAS = [
                 "required": ["path"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "query_api",
+            "description": "Query the backend API to get live data (item counts, analytics, status codes). Use this for questions about current system state, not documentation.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "method": {
+                        "type": "string",
+                        "description": "HTTP method (GET, POST, etc.)"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "API path (e.g., '/items/', '/analytics/completion-rate')"
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "Optional JSON request body (for POST/PUT)"
+                    }
+                },
+                "required": ["method", "path"]
+            }
+        }
     }
 ]
 
 # System prompt for the agent
 SYSTEM_PROMPT = """You are a helpful documentation agent for a software engineering project.
-You have access to two tools:
-1. read_file - Read the contents of a file
-2. list_files - List files in a directory
+You have access to three tools:
+1. read_file - Read the contents of a file in the project repository
+2. list_files - List files and directories at a given path
+3. query_api - Query the backend API to get live data (item counts, analytics, status codes)
 
 When answering questions:
 1. Use list_files to discover what files exist in relevant directories
-2. Use read_file to read the contents of files that may contain the answer
-3. Always include a source reference in your answer (file path + section anchor if applicable)
-4. Be concise and accurate
+2. Use read_file to read documentation (wiki/) or source code files
+3. Use query_api for questions about live system data (database counts, API responses, analytics)
+4. Always include a source reference in your answer when using read_file (file path + section anchor)
+5. For query_api answers, the source is the API endpoint itself
+6. Be concise and accurate
 
-The project wiki is in the 'wiki/' directory. Use it to find answers.
+Tool selection guide:
+- Wiki/documentation questions → read_file with wiki/ path
+- Source code questions → read_file with backend/ or other source paths
+- Live data questions (counts, status codes, analytics) → query_api
+- Discovering files → list_files
+
+The project wiki is in the 'wiki/' directory. The backend API is at the configured base URL.
 """
 
 
@@ -197,13 +244,13 @@ def call_llm(messages: list[dict[str, Any]], config: dict[str, str]) -> dict[str
     Returns:
         Parsed LLM response dictionary, or None on error.
     """
-    url = f"{config['api_base']}/chat/completions"
+    url = f"{config['llm_api_base']}/chat/completions"
     headers = {
-        "Authorization": f"Bearer {config['api_key']}",
+        "Authorization": f"Bearer {config['llm_api_key']}",
         "Content-Type": "application/json"
     }
     payload = {
-        "model": config["model"],
+        "model": config["llm_model"],
         "messages": messages,
         "tools": TOOL_SCHEMAS,
         "tool_choice": "auto"
@@ -222,12 +269,65 @@ def call_llm(messages: list[dict[str, Any]], config: dict[str, str]) -> dict[str
         return None
 
 
-def execute_tool(name: str, args: dict[str, Any]) -> str:
+def query_api(method: str, path: str, body: str | None = None, config: dict[str, str] | None = None) -> str:
+    """Query the backend API with authentication.
+
+    Args:
+        method: HTTP method (GET, POST, etc.)
+        path: API path (e.g., '/items/', '/analytics/completion-rate')
+        body: Optional JSON request body for POST/PUT
+        config: Configuration dictionary (uses global if not provided)
+
+    Returns:
+        JSON string with status_code and body, or error message.
+    """
+    if config is None:
+        # Try to get config from environment
+        config = {}
+        config["lms_api_key"] = os.environ.get("LMS_API_KEY", "")
+        config["api_base_url"] = os.environ.get("AGENT_API_BASE_URL", "http://localhost:42002")
+
+    if not config.get("lms_api_key"):
+        return "Error: LMS_API_KEY not configured"
+
+    # Build URL
+    base_url = config["api_base_url"].rstrip("/")
+    url = f"{base_url}{path}"
+
+    # Build headers
+    headers = {
+        "Authorization": f"Bearer {config['lms_api_key']}",
+        "Content-Type": "application/json"
+    }
+
+    print(f"Querying API: {method} {url}", file=sys.stderr)
+
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            kwargs: dict[str, Any] = {"headers": headers}
+            if body:
+                kwargs["json"] = json.loads(body)
+
+            response = client.request(method, url, **kwargs)
+
+            result = {
+                "status_code": response.status_code,
+                "body": response.text
+            }
+            return json.dumps(result)
+    except json.JSONDecodeError as e:
+        return f"Error: Invalid JSON body: {e}"
+    except Exception as e:
+        return f"Error: API request failed: {e}"
+
+
+def execute_tool(name: str, args: dict[str, Any], config: dict[str, str]) -> str:
     """Execute a tool by name with given arguments.
 
     Args:
-        name: Tool name ('read_file' or 'list_files')
+        name: Tool name ('read_file', 'list_files', or 'query_api')
         args: Tool arguments dictionary
+        config: Configuration dictionary
 
     Returns:
         Tool result as string.
@@ -236,6 +336,13 @@ def execute_tool(name: str, args: dict[str, Any]) -> str:
         return read_file(args.get("path", ""))
     elif name == "list_files":
         return list_files(args.get("path", ""))
+    elif name == "query_api":
+        return query_api(
+            args.get("method", "GET"),
+            args.get("path", ""),
+            args.get("body"),
+            config
+        )
     else:
         return f"Error: Unknown tool '{name}'"
 
@@ -299,7 +406,7 @@ def run_agentic_loop(question: str, config: dict[str, str]) -> dict[str, Any]:
                 tool_args = json.loads(tool_call["function"]["arguments"])
 
                 # Execute tool
-                result = execute_tool(tool_name, tool_args)
+                result = execute_tool(tool_name, tool_args, config)
 
                 # Log the tool call
                 tool_calls_log.append({
@@ -362,11 +469,11 @@ def main() -> None:
 
     question = sys.argv[1]
 
-    # Load LLM configuration from environment
-    config = load_llm_config()
+    # Load all configuration from environment
+    config = load_agent_config()
 
     # Log configuration (without sensitive data) to stderr
-    print(f"Loaded LLM config: model={config['model']}, api_base={config['api_base']}", file=sys.stderr)
+    print(f"Loaded config: model={config['llm_model']}, api_base={config['llm_api_base']}, backend={config['api_base_url']}", file=sys.stderr)
 
     # Create and output response
     response = create_response(question, config)
