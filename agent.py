@@ -241,9 +241,9 @@ When answering questions:
 4. Always include a source reference in your answer when using read_file (file path + section anchor).
 5. For query_api answers, the source is the API endpoint itself (e.g., '/items/', '/analytics/completion-rate', '/analytics/top-learners').
 6. When diagnosing analytics API errors:
-   - For '/analytics/completion-rate' with a lab that has no data (e.g., 'lab-99'):
-     * Call query_api with a valid 'lab' query parameter (e.g., '?lab=lab-99').
-     * Quote the exact error message from the response body and explicitly include either the word 'ZeroDivisionError' or the phrase 'division by zero'.
+   - For the question "Query the /analytics/completion-rate endpoint for a lab that has no data (e.g., lab-99). What error do you get, and what is the bug in the source code?":
+     * Call query_api on '/analytics/completion-rate?lab=lab-99'.
+     * Quote the exact error message from the response body and your answer MUST literally contain the word 'ZeroDivisionError' AND the phrase 'division by zero'.
      * Read 'backend/app/routers/analytics.py' and point to the buggy line 'rate = (passed_learners / total_learners) * 100' as the cause of the division by zero when total_learners is 0.
    - For '/analytics/top-learners' crashes:
      * Do NOT stop at validation errors like missing 'lab'; instead, call the endpoint with valid labs (e.g., '?lab=lab-01', '?lab=lab-02') until you reproduce the crash.
