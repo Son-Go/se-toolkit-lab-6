@@ -200,7 +200,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "query_api",
-            "description": "Query the backend API to get live data (item counts, analytics, status codes). Use this for questions about current system state, not documentation.",
+            "description": "Query the backend API to get live data (item counts, analytics, status codes). Use this for questions about current system state, not documentation. For questions that explicitly ask about unauthenticated behavior (e.g., calling /items/ without an auth header), set use_auth to false so the Authorization header is omitted.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -215,6 +215,10 @@ TOOL_SCHEMAS = [
                     "body": {
                         "type": "string",
                         "description": "Optional JSON request body (for POST/PUT)"
+                    },
+                    "use_auth": {
+                        "type": "boolean",
+                        "description": "Whether to include the Authorization header. Set to false to test unauthenticated behavior (no API key). Defaults to true."
                     }
                 },
                 "required": ["method", "path"]
@@ -283,7 +287,13 @@ def call_llm(messages: list[dict[str, Any]], config: dict[str, str]) -> dict[str
         return None
 
 
-def query_api(method: str, path: str, body: str | None = None, config: dict[str, str] | None = None) -> str:
+def query_api(
+    method: str,
+    path: str,
+    body: str | None = None,
+    config: dict[str, str] | None = None,
+    use_auth: bool = True,
+) -> str:
     """Query the backend API with authentication.
 
     Args:
@@ -301,7 +311,7 @@ def query_api(method: str, path: str, body: str | None = None, config: dict[str,
         config["lms_api_key"] = os.environ.get("LMS_API_KEY", "")
         config["api_base_url"] = os.environ.get("AGENT_API_BASE_URL", "http://localhost:42002")
 
-    if not config.get("lms_api_key"):
+    if use_auth and not config.get("lms_api_key"):
         return "Error: LMS_API_KEY not configured"
 
     # Build URL
@@ -309,10 +319,9 @@ def query_api(method: str, path: str, body: str | None = None, config: dict[str,
     url = f"{base_url}{path}"
 
     # Build headers
-    headers = {
-        "Authorization": f"Bearer {config['lms_api_key']}",
-        "Content-Type": "application/json"
-    }
+    headers = {"Content-Type": "application/json"}
+    if use_auth and config.get("lms_api_key"):
+        headers["Authorization"] = f"Bearer {config['lms_api_key']}"
 
     print(f"Querying API: {method} {url}", file=sys.stderr)
 
@@ -355,7 +364,8 @@ def execute_tool(name: str, args: dict[str, Any], config: dict[str, str]) -> str
             args.get("method", "GET"),
             args.get("path", ""),
             args.get("body"),
-            config
+            config,
+            args.get("use_auth", True),
         )
     else:
         return f"Error: Unknown tool '{name}'"
