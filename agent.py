@@ -8,6 +8,8 @@ Reads configuration from environment variables:
 - LMS_API_KEY: API key for backend authentication
 - AGENT_API_BASE_URL: Base URL for the backend API (default: http://localhost:42002)
 
+Also loads from .env.agent.secret if present (for VM deployment).
+
 Tools:
 - read_file: Read a file from the project repository
 - list_files: List files in a directory
@@ -23,6 +25,18 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+
+# Load environment from .env.agent.secret if it exists (VM deployment)
+ENV_FILE = Path(__file__).parent / ".env.agent.secret"
+if ENV_FILE.exists():
+    for line in ENV_FILE.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
 
 # Maximum number of tool calls per question
 MAX_TOOL_CALLS = 10
