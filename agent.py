@@ -429,11 +429,14 @@ def run_agentic_loop(question: str, config: dict[str, str]) -> dict[str, Any]:
                     "result": result
                 })
 
-                # Append tool result to messages
+                # Append tool result back into the conversation so the LLM
+                # can see it. Some OpenAI-compatible backends used in this
+                # course do not fully support the 'tool' role, so we inject
+                # the result as a user-style message instead of using the
+                # official tool role to avoid 500 errors.
                 messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call["id"],
-                    "content": result
+                    "role": "user",
+                    "content": f"Result of calling tool '{tool_name}' with arguments {tool_args}:\n{result}"
                 })
 
                 tool_call_count += 1
@@ -492,8 +495,9 @@ def main() -> None:
     # Create and output response
     response = create_response(question, config)
 
-    # Output JSON to stdout
-    print(json.dumps(response, indent=2))
+    # Output compact single-line JSON to stdout so external
+    # evaluators that read line-by-line see a complete object.
+    print(json.dumps(response, separators=(",", ":")))
 
 
 if __name__ == "__main__":
