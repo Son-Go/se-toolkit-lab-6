@@ -423,10 +423,15 @@ def run_agentic_loop(question: str, config: dict[str, str]) -> dict[str, Any]:
                 result = execute_tool(tool_name, tool_args, config)
 
                 # Log the tool call
-                tool_calls_log.append({
+                try:
+                    result_obj = json.loads(result) if isinstance(result, str) else result
+                except json.JSONDecodeError:
+                    result_obj = result
+
+                    tool_calls_log.append({
                     "tool": tool_name,
                     "args": tool_args,
-                    "result": result
+                    "result": result_obj  # Now it's a proper object, not a string
                 })
 
                 # Append tool result to messages
