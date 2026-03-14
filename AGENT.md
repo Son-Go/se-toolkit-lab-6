@@ -2,7 +2,7 @@
 
 ## Overview
 
-This agent is a CLI tool that answers questions using a Large Language Model (LLM). It is designed to be configurable, testable, and easy to extend.
+This agent is a CLI tool that answers questions using a Large Language Model (LLM) with access to project documentation. It implements an **agentic loop** that allows the LLM to call tools (`read_file`, `list_files`) to retrieve information from the project wiki.
 
 ## Configuration
 
@@ -21,14 +21,14 @@ The agent reads LLM configuration from environment variables (never hardcoded):
 Configuration is loaded via `load_llm_config()` function:
 - Validates all required variables are present
 - Exits with error code 1 if any variable is missing
-- Returns a dictionary with lowercase keys
+- Returns a dictionary with keys: `api_key`, `api_base`, `model`
 
 ## CLI Interface
 
 ### Usage
 
 ```bash
-python agent.py <question>
+uv run agent.py <question>
 ```
 
 ### Arguments
@@ -42,60 +42,177 @@ python agent.py <question>
 - **stdout**: JSON response with the following structure:
   ```json
   {
-    "question": "original question",
     "answer": "response text",
-    "model": "model name",
-    "status": "ready"
+    "source": "wiki/git-workflow.md#resolving-merge-conflicts",
+    "tool_calls": [
+      {
+        "tool": "list_files",
+        "args": {"path": "wiki"},
+        "result": "file1.md\nfile2.md"
+      },
+      {
+        "tool": "read_file",
+        "args": {"path": "wiki/git-workflow.md"},
+        "result": "file contents..."
+      }
+    ]
   }
   ```
 - **stderr**: Debug and error messages
 
+## Tools
+
+The agent has two tools for interacting with the project repository:
+
+### `read_file`
+
+Read the contents of a file in the project repository.
+
+**Parameters:**
+- `path` (string, required): Relative path from project root (e.g., `wiki/git-workflow.md`)
+
+**Returns:** File contents as a string, or an error message.
+
+**Security:**
+- Rejects paths containing `..` (path traversal)
+- Verifies resolved path is within project root
+- Returns error if file doesn't exist or is not a file
+
+### `list_files`
+
+List files and directories at a given path.
+
+**Parameters:**
+- `path` (string, required): Relative directory path from project root (e.g., `wiki`)
+
+**Returns:** Newline-separated listing of entries, or an error message.
+
+**Security:**
+- Rejects paths containing `..` (path traversal)
+- Verifies resolved path is within project root
+- Returns error if directory doesn't exist or is not a directory
+
+## Agentic Loop
+
+The agent implements an agentic loop that allows the LLM to decide which tools to call:
+
+```
+Question ──▶ LLM ──▶ tool calls? ──yes──▶ execute tools ──▶ back to LLM
+                       │
+                       no
+                       │
+                       ▼
+                  JSON output
+```
+
+### Algorithm
+
+1. **Initialize** messages with system prompt and user question
+2. **Loop** (max 10 iterations):
+   - Call LLM with messages + tool schemas
+   - **If tool calls present:**
+     - Execute each tool
+     - Append results as `tool` role messages
+     - Continue loop
+   - **If no tool calls:**
+     - Extract answer from LLM response
+     - Extract source reference
+     - Return JSON and exit
+3. **Max iterations reached:** Return partial answer with tool call log
+
+### System Prompt
+
+The system prompt instructs the LLM to:
+- Use `list_files` to discover relevant wiki files
+- Use `read_file` to read file contents
+- Always include a source reference (file path + section anchor)
+- Be concise and accurate
+
+## Tool Schemas
+
+Tools are registered with the LLM using JSON schemas:
+
+```json
+{
+  "type": "function",
+  "function": {
+    "name": "read_file",
+    "description": "Read the contents of a file...",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": {"type": "string"}
+      },
+      "required": ["path"]
+    }
+  }
+}
+```
+
+## Security
+
+### Path Security
+
+The `is_safe_path()` function ensures tools cannot access files outside the project:
+
+1. Rejects any path containing `..`
+2. Resolves the full path using `os.path.realpath()`
+3. Verifies the resolved path is within `PROJECT_ROOT`
+
+### No Hardcoded Credentials
+
+API credentials are **never** hardcoded. They must be provided via environment variables.
+
 ## File Structure
 
 ```
-agent.py          # Main CLI entry point
-AGENT.md          # This documentation
-plans/task-1.md   # Implementation plan
-tests/test_agent.py  # Regression tests
+agent.py              # Main CLI entry point with agentic loop
+AGENT.md              # This documentation
+plans/task-1.md       # Task 1 implementation plan
+plans/task-2.md       # Task 2 implementation plan
+tests/test_agent.py   # Regression tests
+wiki/                 # Project documentation (agent's knowledge base)
 ```
 
 ## Design Decisions
 
-### Why Environment Variables?
+### Why Function Calling?
 
-- **Security**: Credentials are never committed to version control
-- **Flexibility**: Easy to switch between different LLM providers
-- **Testing**: Tests can inject mock credentials
+- **Structured tool usage:** LLM returns structured tool call objects
+- **Type safety:** Schemas define expected parameters
+- **Flexibility:** Easy to add new tools
 
-### Why JSON Output?
+### Why Agentic Loop?
 
-- **Programmatic consumption**: Other tools can parse the response
-- **Structured data**: Easy to extract specific fields
-- **Standard format**: Widely supported across languages
+- **Multi-step reasoning:** LLM can chain multiple tool calls
+- **Autonomy:** LLM decides which tools to use
+- **Transparency:** All tool calls are logged in output
 
-### Why stderr for Debug?
+### Why 10 Tool Call Limit?
 
-- **Separation of concerns**: stdout is for data, stderr is for diagnostics
-- **Piping friendly**: Can redirect output without debug noise
-- **Best practice**: Follows Unix philosophy
+- **Cost control:** Prevents excessive API calls
+- **Latency:** Avoids infinite loops
+- **Practical:** Most questions need 2-5 tool calls
 
 ## Extension Points
 
-Future tasks will extend the agent with:
-- Actual LLM API calls (currently placeholder)
-- Tool usage tracking
-- Interaction with the LMS backend
+Future tasks may extend the agent with:
+- `query_api` tool for backend queries
 - Multi-turn conversation support
+- Caching for frequently accessed files
+- Section-level file reading
 
 ## Testing
 
 Run tests with:
 
 ```bash
-pytest tests/test_agent.py
+uv run pytest tests/test_agent.py -v
 ```
 
 Tests verify:
 - JSON output structure
 - Environment variable loading
-- Error handling for missing config
+- Tool execution
+- Path security
+- Agentic loop behavior
